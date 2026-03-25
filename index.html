@@ -107,6 +107,11 @@ const PRIO={
   media:{label:"Media",color:"#F0B84A",bg:"rgba(240,184,74,0.10)"},
   baja: {label:"Baja", color:"#3DD6A0",bg:"rgba(61,214,160,0.10)"},
 };
+const COMP_ST={
+  completo:  {label:"Completo",   color:"#3DD6A0",bg:"rgba(61,214,160,0.12)", icon:"✓"},
+  parcial:   {label:"Parcial",    color:"#F0B84A",bg:"rgba(240,184,74,0.12)", icon:"~"},
+  incompleto:{label:"Incompleto", color:"#F07B52",bg:"rgba(240,123,82,0.12)", icon:"✗"},
+};
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const BG="#0A0C14",CARD="#11131D",CARD2="#181B27",CARD3="#1F2230";
@@ -121,17 +126,23 @@ const DAYS_S=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const todayStr=()=>new Date().toISOString().split("T")[0];
 const timeStr=()=>new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
 const fmtDate=ds=>{const d=new Date(ds+"T12:00:00");return `${d.getDate()} ${["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][d.getMonth()]}`;};
+const daysUntil=ds=>{if(!ds)return null;return Math.ceil((new Date(ds+"T23:59:59")-new Date())/(1000*60*60*24));};
 
 const mkDefault=()=>({
   topicStatus:Object.fromEntries(SUBJECTS.map(s=>[s.id,Object.fromEntries(s.topics.map((_,i)=>[i,"pendiente"]))])),
   events:[],todos:[],
   notes:Object.fromEntries(SUBJECTS.map(s=>[s.id,""])),
   finals:Object.fromEntries(SUBJECTS.map(s=>[s.id,{date:"",status:"pendiente",nota:""}])),
-  horasLog:[],feed:[],
+  resources:Object.fromEntries(SUBJECTS.map(s=>[s.id,[]])),
+  feed:[],
 });
 
 const calcPct=(data,sid)=>{const v=Object.values(data.topicStatus?.[sid]||{});return v.length?Math.round(v.filter(x=>x==="visto").length/v.length*100):0;};
-const calcXP=data=>SUBJECTS.reduce((a,s)=>a+Object.values(data.topicStatus?.[s.id]||{}).filter(v=>v==="visto").length,0)*10+(data.todos||[]).filter(t=>t.done).length*5;
+const calcXP=data=>{
+  const topics=SUBJECTS.reduce((a,s)=>a+Object.values(data.topicStatus?.[s.id]||{}).filter(v=>v==="visto").length,0)*10;
+  const todos=(data.todos||[]).reduce((a,t)=>{if(!t.done)return a;return a+(t.completionStatus==="completo"?15:t.completionStatus==="parcial"?8:3);},0);
+  return topics+todos;
+};
 const getLevel=xp=>xp>=800?{name:"Imparable 🏆",color:GOLD}:xp>=500?{name:"Modo bestia 🔥",color:CORAL}:xp>=300?{name:"Enganchado ⚡",color:GREEN}:xp>=150?{name:"En zona 🎯",color:"#9D8EF5"}:xp>=50?{name:"Tomando ritmo",color:BLUE}:{name:"Arrancando",color:T2};
 const calcStreak=feed=>{
   if(!feed?.length)return 0;
@@ -196,9 +207,12 @@ function Dashboard({data,getP,setView,setSub,upEvents,pendTodos}){
   const today=todayStr(),todayFeed=(data.feed||[]).filter(f=>f.date===today).slice().reverse();
   const totalDone=SUBJECTS.reduce((a,s)=>a+Object.values(data.topicStatus?.[s.id]||{}).filter(v=>v==="visto").length,0);
   const totalT=SUBJECTS.reduce((a,s)=>a+s.topics.length,0);
-  const nextXP=xp>=800?800:[50,150,300,500,800].find(n=>n>xp)||800;
+  const nextXP=[50,150,300,500,800].find(n=>n>xp)||800;
   const prevXP=xp>=800?500:xp>=500?300:xp>=300?150:xp>=150?50:0;
   const xpPct=Math.min(100,Math.round((xp-prevXP)/(nextXP-prevXP)*100));
+  const todos=data.todos||[];
+  const overdueObjs=todos.filter(t=>!t.done&&t.deadline&&daysUntil(t.deadline)<0).length;
+  const dueSoon=todos.filter(t=>!t.done&&t.deadline&&daysUntil(t.deadline)>=0&&daysUntil(t.deadline)<=3);
 
   return(
     <div>
@@ -214,10 +228,10 @@ function Dashboard({data,getP,setView,setSub,upEvents,pendTodos}){
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:12,marginBottom:20}}>
         {[
-          {icon:"🔥",label:"Racha",      val:`${streak} días`,        color:streak>0?GOLD:T3},
-          {icon:"📚",label:"Temas",      val:`${totalDone}/${totalT}`, color:T1},
-          {icon:"✅",label:"Hoy",         val:`${todayFeed.length}`,    color:todayFeed.length>0?GREEN:T3},
-          {icon:"📝",label:"Pendientes", val:pendTodos.length,          color:pendTodos.length>3?CORAL:T1},
+          {icon:"🔥",label:"Racha",          val:`${streak} días`,         color:streak>0?GOLD:T3},
+          {icon:"📚",label:"Temas vistos",   val:`${totalDone}/${totalT}`,  color:T1},
+          {icon:"🎯",label:"Obj. pendientes",val:pendTodos.length,           color:pendTodos.length>3?CORAL:T1},
+          {icon:"⚠️",label:"Vencidos",       val:overdueObjs,               color:overdueObjs>0?"#F46FAE":T3},
         ].map((s,i)=>(
           <div key={i} style={{background:CARD2,border:`0.5px solid ${BD}`,borderRadius:12,padding:16}}>
             <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
@@ -486,55 +500,177 @@ function Calendario({data,month,year,setMonth,setYear,addEvent,deleteEvent}){
 }
 
 // ─── PENDIENTES ───────────────────────────────────────────────────────────────
-function Pendientes({data,addTodo,toggleTodo,deleteTodo}){
+function Pendientes({data,addTodo,completeTodo,undoTodo,deleteTodo}){
   const [showAdd,setShowAdd]=useState(false);
-  const [nTodo,setNTodo]=useState({subjectId:SUBJECTS[0].id,text:"",priority:"media"});
+  const [nTodo,setNTodo]=useState({subjectId:SUBJECTS[0].id,text:"",priority:"media",deadline:""});
   const [fSub,setFSub]=useState("todos");
   const [fSt,setFSt]=useState("pendientes");
-  const filtered=(data.todos||[]).filter(t=>fSub==="todos"||t.subjectId===fSub).filter(t=>fSt==="todos"||(fSt==="pendientes"?!t.done:t.done)).sort((a,b)=>({alta:0,media:1,baja:2})[a.priority]-({alta:0,media:1,baja:2})[b.priority]);
-  const doAdd=()=>{if(!nTodo.text)return;addTodo({...nTodo,id:Date.now().toString(),done:false});setShowAdd(false);setNTodo({subjectId:SUBJECTS[0].id,text:"",priority:"media"});};
+  const [sortBy,setSortBy]=useState("deadline");
+  const [completing,setCompleting]=useState(null); // todo being completed
+  const [compStatus,setCompStatus]=useState("completo");
+  const [compScore,setCompScore]=useState(5);
+
+  const todos=data.todos||[];
+  const overdue=todos.filter(t=>!t.done&&t.deadline&&daysUntil(t.deadline)<0).length;
+
+  const filtered=todos
+    .filter(t=>fSub==="todos"||t.subjectId===fSub)
+    .filter(t=>fSt==="todos"||(fSt==="pendientes"?!t.done:t.done))
+    .sort((a,b)=>{
+      if(sortBy==="deadline"){
+        if(!a.deadline&&!b.deadline)return 0; if(!a.deadline)return 1; if(!b.deadline)return -1;
+        return a.deadline.localeCompare(b.deadline);
+      }
+      return ({alta:0,media:1,baja:2})[a.priority]-({alta:0,media:1,baja:2})[b.priority];
+    });
+
+  const doAdd=()=>{
+    if(!nTodo.text)return;
+    addTodo({...nTodo,id:Date.now().toString(),done:false,completionStatus:null,score:null,completedAt:null});
+    setShowAdd(false);setNTodo({subjectId:SUBJECTS[0].id,text:"",priority:"media",deadline:""});
+  };
+  const openComplete=todo=>{setCompleting(todo);setCompStatus("completo");setCompScore(5);};
+  const doComplete=()=>{
+    if(!completing)return;
+    completeTodo(completing.id,compStatus,compScore);
+    setCompleting(null);
+  };
+
+  const DLChip=({deadline,done})=>{
+    if(!deadline)return null;
+    const d=daysUntil(deadline);
+    const color=done?T3:d<0?"#F46FAE":d===0?"#F07B52":d<=3?"#F0B84A":T3;
+    const bg=done?"rgba(255,255,255,0.04)":d<0?"rgba(244,111,174,0.12)":d===0?"rgba(240,123,82,0.12)":d<=3?"rgba(240,184,74,0.10)":"rgba(255,255,255,0.05)";
+    const label=done?fmtDate(deadline):d<0?`Venció hace ${Math.abs(d)}d`:d===0?"Hoy ⚡":d===1?"Mañana":`${d}d`;
+    return<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:bg,color,fontWeight:500,whiteSpace:"nowrap"}}>{label}</span>;
+  };
+
+  const ScoreStars=({score,color})=>{
+    if(!score)return null;
+    return<span style={{fontSize:12,letterSpacing:1}}>{[1,2,3,4,5].map(i=><span key={i} style={{color:i<=score?color:"rgba(255,255,255,0.15)"}}>{i<=score?"★":"☆"}</span>)}</span>;
+  };
 
   return(
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <div><h2 style={{color:T1,fontWeight:500,fontSize:18,margin:0}}>Pendientes y desafíos</h2><p style={{color:T2,fontSize:13,margin:"4px 0 0"}}>Tareas y temas a reforzar</p></div>
-        <Btn onClick={()=>setShowAdd(true)}>+ Nueva tarea</Btn>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div>
+          <h2 style={{color:T1,fontWeight:500,fontSize:18,margin:0}}>Objetivos</h2>
+          <p style={{color:T2,fontSize:13,margin:"4px 0 0"}}>Con deadline y seguimiento de cumplimiento</p>
+        </div>
+        <Btn onClick={()=>setShowAdd(true)}>+ Nuevo objetivo</Btn>
       </div>
-      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+
+      {overdue>0&&(
+        <div style={{background:"rgba(244,111,174,0.08)",border:"0.5px solid rgba(244,111,174,0.3)",borderRadius:10,padding:"10px 16px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+          <span>⚠️</span>
+          <span style={{fontSize:12,color:"#F46FAE"}}>{overdue} objetivo{overdue>1?"s":""} vencido{overdue>1?"s":""} — ¡ponete al día!</span>
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
         {[{id:"todos",name:"Todas"},...SUBJECTS.map(s=>({id:s.id,name:s.short}))].map(o=>{
           const s=SUBJECTS.find(sub=>sub.id===o.id);
-          return <button key={o.id} onClick={()=>setFSub(o.id)} style={{padding:"5px 12px",borderRadius:20,cursor:"pointer",border:fSub===o.id?`1.5px solid ${s?.color||BLUE}`:`0.5px solid ${BD}`,background:fSub===o.id?s?.glow||`${BLUE}18`:"transparent",color:fSub===o.id?s?.color||BLUE:T2,fontSize:12}}>{o.name}</button>;
+          return<button key={o.id} onClick={()=>setFSub(o.id)} style={{padding:"5px 11px",borderRadius:20,cursor:"pointer",border:fSub===o.id?`1.5px solid ${s?.color||BLUE}`:`0.5px solid ${BD}`,background:fSub===o.id?s?.glow||`${BLUE}18`:"transparent",color:fSub===o.id?s?.color||BLUE:T2,fontSize:12}}>{o.name}</button>;
         })}
-        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
-          {[["pendientes","Pendientes"],["completadas","Completadas"],["todos","Todas"]].map(([st,lb])=><button key={st} onClick={()=>setFSt(st)} style={{padding:"5px 12px",borderRadius:20,cursor:"pointer",border:fSt===st?`1.5px solid ${BD2}`:`0.5px solid ${BD}`,background:fSt===st?CARD2:"transparent",color:T2,fontSize:12}}>{lb}</button>)}
+        <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+          {[["deadline","Por deadline"],["priority","Por prioridad"]].map(([v,lb])=>(
+            <button key={v} onClick={()=>setSortBy(v)} style={{padding:"4px 10px",borderRadius:20,cursor:"pointer",border:sortBy===v?`1.5px solid ${BLUE}`:`0.5px solid ${BD}`,background:sortBy===v?`${BLUE}15`:"transparent",color:sortBy===v?BLUE:T2,fontSize:11}}>{lb}</button>
+          ))}
         </div>
       </div>
-      <div style={cs({padding:"8px 20px"})}>
-        {filtered.length===0?<div style={{padding:"24px 0",textAlign:"center",color:T3,fontSize:13}}>Sin tareas. <span style={{color:BLUE,cursor:"pointer"}} onClick={()=>setShowAdd(true)}>Agregar →</span></div>
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        {[["pendientes","Pendientes"],["completadas","Completados"],["todos","Todos"]].map(([st,lb])=>(
+          <button key={st} onClick={()=>setFSt(st)} style={{padding:"5px 12px",borderRadius:20,cursor:"pointer",border:fSt===st?`1.5px solid ${BD2}`:`0.5px solid ${BD}`,background:fSt===st?CARD2:"transparent",color:T2,fontSize:12}}>{lb}</button>
+        ))}
+        <span style={{marginLeft:"auto",fontSize:11,color:T3,alignSelf:"center"}}>
+          {todos.filter(t=>t.done).length}/{todos.length} completados
+        </span>
+      </div>
+
+      <div style={cs({padding:"4px 20px"})}>
+        {filtered.length===0
+          ?<div style={{padding:"24px 0",textAlign:"center",color:T3,fontSize:13}}>Sin objetivos. <span style={{color:BLUE,cursor:"pointer"}} onClick={()=>setShowAdd(true)}>Crear →</span></div>
           :filtered.map(todo=>{
             const s=SUBJECTS.find(sub=>sub.id===todo.subjectId),p=PRIO[todo.priority];
+            const cs_=COMP_ST[todo.completionStatus];
+            const days=daysUntil(todo.deadline);
+            const isOverdue=!todo.done&&todo.deadline&&days<0;
+            const borderColor=isOverdue?"rgba(244,111,174,0.4)":todo.done&&cs_?cs_.color+"30":BD;
             return(
-              <div key={todo.id} style={{display:"flex",gap:12,alignItems:"center",padding:"12px 0",borderBottom:`0.5px solid ${BD}`}}>
-                <button onClick={()=>toggleTodo(todo.id)} style={{width:22,height:22,borderRadius:"50%",cursor:"pointer",flexShrink:0,border:`1.5px solid ${todo.done?s?.color||GREEN:BD2}`,background:todo.done?s?.color||GREEN:"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s"}}>
-                  {todo.done&&<span style={{color:"white",fontSize:11}}>✓</span>}
+              <div key={todo.id} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"14px 0",borderBottom:`0.5px solid ${BD}`,borderLeft:`3px solid ${borderColor}`,paddingLeft:14,marginLeft:-14}}>
+                {/* Checkbox */}
+                <button
+                  onClick={()=>todo.done?undoTodo(todo.id):openComplete(todo)}
+                  style={{width:24,height:24,borderRadius:"50%",cursor:"pointer",flexShrink:0,marginTop:1,
+                    border:todo.done?`2px solid ${cs_?.color||GREEN}`:`1.5px solid ${isOverdue?"#F46FAE":BD2}`,
+                    background:todo.done?cs_?.color||GREEN:"transparent",
+                    display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s"}}>
+                  {todo.done&&<span style={{color:"white",fontSize:12}}>{cs_?.icon||"✓"}</span>}
                 </button>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,color:todo.done?T3:T1,textDecoration:todo.done?"line-through":"none"}}>{todo.text}</div>
-                  <div style={{display:"flex",gap:8,marginTop:3}}><span style={{fontSize:10,color:s?.color}}>{s?.short}</span><Badge label={p.label} color={p.color} bg={p.bg}/></div>
+                  <div style={{fontSize:13,color:todo.done?T3:T1,textDecoration:todo.done?"line-through":"none",fontWeight:isOverdue?500:400,marginBottom:5}}>{todo.text}</div>
+                  <div style={{display:"flex",gap:7,flexWrap:"wrap",alignItems:"center"}}>
+                    <span style={{fontSize:10,color:s?.color,fontWeight:500}}>{s?.short}</span>
+                    <span style={{fontSize:10,padding:"1px 7px",borderRadius:20,background:p.bg,color:p.color}}>{p.label}</span>
+                    {todo.deadline&&<DLChip deadline={todo.deadline} done={todo.done}/>}
+                    {todo.done&&cs_&&<span style={{fontSize:10,padding:"1px 8px",borderRadius:20,background:cs_.bg,color:cs_.color,fontWeight:500}}>{cs_.label}</span>}
+                    {todo.done&&todo.score&&<ScoreStars score={todo.score} color={cs_?.color||GREEN}/>}
+                  </div>
+                  {todo.done&&todo.completedAt&&<div style={{fontSize:10,color:T3,marginTop:4}}>Completado el {fmtDate(todo.completedAt)}</div>}
                 </div>
-                <button onClick={()=>deleteTodo(todo.id)} style={{border:"none",background:"transparent",cursor:"pointer",color:T3,fontSize:18}}>×</button>
+                <button onClick={()=>deleteTodo(todo.id)} style={{border:"none",background:"transparent",cursor:"pointer",color:T3,fontSize:18,flexShrink:0,marginTop:2}}>×</button>
               </div>
             );
           })}
       </div>
-      <Modal show={showAdd} onClose={()=>setShowAdd(false)} title="Nueva tarea">
+
+      {/* Add modal */}
+      <Modal show={showAdd} onClose={()=>setShowAdd(false)} title="Nuevo objetivo">
         <FR label="Materia"><select value={nTodo.subjectId} onChange={e=>setNTodo(n=>({...n,subjectId:e.target.value}))} style={IS}>{SUBJECTS.map(s=><option key={s.id} value={s.id}>{s.name}{s.finalOnly?" (final)":""}</option>)}</select></FR>
-        <FR label="Prioridad"><select value={nTodo.priority} onChange={e=>setNTodo(n=>({...n,priority:e.target.value}))} style={IS}><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option></select></FR>
-        <FR label="Tarea"><input type="text" value={nTodo.text} onChange={e=>setNTodo(n=>({...n,text:e.target.value}))} placeholder="ej: Repasar método Simplex" style={IS} onKeyDown={e=>e.key==="Enter"&&doAdd()}/></FR>
+        <FR label="Objetivo"><input type="text" value={nTodo.text} onChange={e=>setNTodo(n=>({...n,text:e.target.value}))} placeholder="ej: Resolver guía de Simplex, repasar Bernoulli..." style={IS} onKeyDown={e=>e.key==="Enter"&&doAdd()}/></FR>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <FR label="Prioridad"><select value={nTodo.priority} onChange={e=>setNTodo(n=>({...n,priority:e.target.value}))} style={IS}><option value="alta">🔴 Alta</option><option value="media">🟡 Media</option><option value="baja">🟢 Baja</option></select></FR>
+          <FR label="Deadline">
+            <input type="date" value={nTodo.deadline} onChange={e=>setNTodo(n=>({...n,deadline:e.target.value}))} style={IS}/>
+          </FR>
+        </div>
+        <div style={{fontSize:11,color:T3,marginTop:-8,marginBottom:14}}>El deadline activa alertas automáticas cuando se acerque.</div>
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
           <Btn onClick={()=>setShowAdd(false)}>Cancelar</Btn>
-          <Btn onClick={doAdd} primary>Agregar</Btn>
+          <Btn onClick={doAdd} primary>Crear objetivo</Btn>
         </div>
+      </Modal>
+
+      {/* Completion modal */}
+      <Modal show={!!completing} onClose={()=>setCompleting(null)} title="¿Cómo te fue?">
+        {completing&&(
+          <div>
+            <div style={{fontSize:13,color:T2,marginBottom:16,padding:"10px 14px",background:CARD2,borderRadius:9,borderLeft:`3px solid ${SUBJECTS.find(s=>s.id===completing.subjectId)?.color||BLUE}`}}>
+              {completing.text}
+            </div>
+            <FR label="Resultado">
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                {Object.entries(COMP_ST).map(([k,v])=>(
+                  <button key={k} onClick={()=>setCompStatus(k)} style={{padding:"12px 8px",borderRadius:10,cursor:"pointer",border:compStatus===k?`2px solid ${v.color}`:`0.5px solid ${BD}`,background:compStatus===k?v.bg:"transparent",color:compStatus===k?v.color:T2,fontSize:13,fontWeight:compStatus===k?500:400,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:20}}>{compStatus===k?v.icon:"○"}</span>
+                    <span>{v.label}</span>
+                  </button>
+                ))}
+              </div>
+            </FR>
+            <FR label={`Puntaje: ${compScore}/5`}>
+              <div style={{display:"flex",gap:6,marginTop:4}}>
+                {[1,2,3,4,5].map(i=>(
+                  <button key={i} onClick={()=>setCompScore(i)} style={{flex:1,padding:"10px 0",borderRadius:8,border:`0.5px solid ${i<=compScore?COMP_ST[compStatus].color:BD}`,background:i<=compScore?COMP_ST[compStatus].bg:"transparent",cursor:"pointer",fontSize:18,color:i<=compScore?COMP_ST[compStatus].color:T3}}>★</button>
+                ))}
+              </div>
+            </FR>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
+              <Btn onClick={()=>setCompleting(null)}>Cancelar</Btn>
+              <Btn onClick={doComplete} primary>Guardar resultado</Btn>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
@@ -598,112 +734,256 @@ function Finales({data,updFinal,getP}){
   );
 }
 
-// ─── ESTADÍSTICAS ─────────────────────────────────────────────────────────────
-function Estadisticas({data,addHoras,delHoras,getP}){
-  const [showAdd,setShowAdd]=useState(false);
-  const [nLog,setNLog]=useState({subjectId:SUBJECTS[0].id,horas:"1",fecha:todayStr(),nota:""});
-  const horasPM=SUBJECTS.map(s=>({...s,horas:(data.horasLog||[]).filter(l=>l.subjectId===s.id).reduce((a,l)=>a+Number(l.horas||0),0)}));
-  const maxH=Math.max(...horasPM.map(h=>h.horas),1),totalH=horasPM.reduce((a,h)=>a+h.horas,0);
-  const xp=calcXP(data),streak=calcStreak(data.feed||[]),lv=getLevel(xp);
-  const today=todayStr(),todayCount=(data.feed||[]).filter(f=>f.date===today).length;
+// ─── PANEL OBJETIVOS ─────────────────────────────────────────────────────────
+function PanelObjetivos({data,getP}){
+  const todos=data.todos||[];
+  const total=todos.length, done=todos.filter(t=>t.done).length;
+  const completos=todos.filter(t=>t.completionStatus==="completo").length;
+  const parciales=todos.filter(t=>t.completionStatus==="parcial").length;
+  const incompletos=todos.filter(t=>t.completionStatus==="incompleto").length;
+  const pending=todos.filter(t=>!t.done).length;
+  const overdue=todos.filter(t=>!t.done&&t.deadline&&daysUntil(t.deadline)<0).length;
+  const completionRate=done>0?Math.round(completos/done*100):0;
+  const avgScore=done>0?(todos.filter(t=>t.done&&t.score).reduce((a,t)=>a+t.score,0)/Math.max(todos.filter(t=>t.done&&t.score).length,1)).toFixed(1):"-";
+  const today=todayStr(),streak=calcStreak(data.feed||[]);
+  const xp=calcXP(data),lv=getLevel(xp);
 
-  const allFeed=[...(data.feed||[])].sort((a,b)=>b.date.localeCompare(a.date)||b.time.localeCompare(a.time));
-  const byDate={};allFeed.forEach(f=>{if(!byDate[f.date])byDate[f.date]=[];byDate[f.date].push(f);});
-  const feedDates=Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).slice(0,12);
+  // Daily activity: last 14 days — how many objectives completed each day
+  const last14=Array.from({length:14},(_,i)=>{
+    const d=new Date();d.setDate(d.getDate()-(13-i));const ds=d.toISOString().split("T")[0];
+    const dayDone=todos.filter(t=>t.done&&t.completedAt===ds);
+    return{date:ds,label:DAYS_S[d.getDay()],count:dayDone.length,isToday:ds===today,
+      completos:dayDone.filter(t=>t.completionStatus==="completo").length,
+      parciales:dayDone.filter(t=>t.completionStatus==="parcial").length,
+    };
+  });
+  const maxDay=Math.max(...last14.map(d=>d.count),1);
 
-  const heatH={};(data.horasLog||[]).forEach(l=>{heatH[l.fecha]=(heatH[l.fecha]||0)+Number(l.horas||0);});
-  const heatDays=[];for(let i=69;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const s=d.toISOString().split("T")[0];heatDays.push({date:s,h:heatH[s]||0});}
+  // Heatmap: last 70 days
+  const heatMap={};
+  todos.filter(t=>t.done&&t.completedAt).forEach(t=>{heatMap[t.completedAt]=(heatMap[t.completedAt]||0)+1;});
+  (data.feed||[]).filter(f=>f.type==="topic").forEach(f=>{heatMap[f.date]=(heatMap[f.date]||0)+1;});
+  const heatDays=[];for(let i=69;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const s=d.toISOString().split("T")[0];heatDays.push({date:s,n:heatMap[s]||0});}
   const heatWeeks=[];for(let i=0;i<heatDays.length;i+=7)heatWeeks.push(heatDays.slice(i,i+7));
-  const hC=h=>!h?"#1A1D2C":h<1?"#193D2E":h<2?"#1E6B4A":h<3?"#27925F":"#3DD6A0";
+  const hC=n=>!n?"#1A1D2C":n<2?"#193D2E":n<4?"#1E6B4A":n<6?"#27925F":"#3DD6A0";
 
-  const doAdd=()=>{if(!nLog.horas||!nLog.fecha)return;addHoras({...nLog,id:Date.now().toString()});setShowAdd(false);setNLog({subjectId:SUBJECTS[0].id,horas:"1",fecha:todayStr(),nota:""});};
+  // Per-subject breakdown
+  const bySubject=SUBJECTS.map(s=>{
+    const st=todos.filter(t=>t.subjectId===s.id);
+    const sd=st.filter(t=>t.done);
+    return{...s,total:st.length,done:sd.length,completos:sd.filter(t=>t.completionStatus==="completo").length,
+      rate:sd.length>0?Math.round(sd.filter(t=>t.completionStatus==="completo").length/sd.length*100):null};
+  });
 
-  const radarPts=SUBJECTS.map((s,i)=>{const angle=(2*Math.PI*i/SUBJECTS.length)-Math.PI/2,pct=getP(s.id)/100,cx=130,cy=110,r=85;return{x:cx+r*pct*Math.cos(angle),y:cy+r*pct*Math.sin(angle),gx:cx+r*Math.cos(angle),gy:cy+r*Math.sin(angle),s,pct,cx,cy,r,i};});
-  const gridLevels=[0.25,0.5,0.75,1].map(f=>SUBJECTS.map((_,i)=>{const angle=(2*Math.PI*i/SUBJECTS.length)-Math.PI/2;return `${130+85*f*Math.cos(angle)},${110+85*f*Math.sin(angle)}`;}).join(" "));
+  // Timeline
+  const completedByDate={};
+  todos.filter(t=>t.done&&t.completedAt).forEach(t=>{if(!completedByDate[t.completedAt])completedByDate[t.completedAt]=[];completedByDate[t.completedAt].push(t);});
+  (data.feed||[]).filter(f=>f.type==="topic").forEach(f=>{if(!completedByDate[f.date])completedByDate[f.date]=[];completedByDate[f.date].push({...f,isTopicFeed:true});});
+  const tlDates=Object.keys(completedByDate).sort((a,b)=>b.localeCompare(a)).slice(0,10);
+
+  // Radar
+  const radarPts=SUBJECTS.map((s,i)=>{
+    const angle=(2*Math.PI*i/SUBJECTS.length)-Math.PI/2,pct=getP(s.id)/100,cx=120,cy=100,r=78;
+    return{x:cx+r*pct*Math.cos(angle),y:cy+r*pct*Math.sin(angle),gx:cx+r*Math.cos(angle),gy:cy+r*Math.sin(angle),s,cx,cy};
+  });
+  const gridPts=f=>SUBJECTS.map((_,i)=>{const a=(2*Math.PI*i/SUBJECTS.length)-Math.PI/2;return`${120+78*f*Math.cos(a)},${100+78*f*Math.sin(a)}`;}).join(" ");
   const poly=radarPts.map(p=>`${p.x},${p.y}`).join(" ");
 
   return(
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <div><h2 style={{color:T1,fontWeight:500,fontSize:18,margin:0}}>Estadísticas</h2><p style={{color:T2,fontSize:13,margin:"4px 0 0"}}>Tu progreso, tiempo y tendencias</p></div>
-        <Btn onClick={()=>setShowAdd(true)}>+ Registrar sesión</Btn>
+      <div style={{marginBottom:20}}>
+        <h2 style={{color:T1,fontWeight:500,fontSize:18,margin:0}}>Panel de objetivos</h2>
+        <p style={{color:T2,fontSize:13,margin:"4px 0 0"}}>Seguimiento de cumplimiento y progreso diario</p>
       </div>
 
+      {/* Key metrics */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:12,marginBottom:16}}>
-        {[{l:"Racha",v:`${streak} días`,c:streak>0?GOLD:T3},{l:"Nivel",v:lv.name,c:lv.color},{l:"Horas totales",v:`${totalH}h`,c:T1},{l:"Hoy completé",v:todayCount,c:todayCount>0?GREEN:T3}].map((s,i)=>(
+        {[
+          {l:"Racha",        v:`${streak} días`,      c:streak>0?GOLD:T3,   icon:"🔥"},
+          {l:"Tasa de éxito",v:`${completionRate}%`,  c:completionRate>=70?GREEN:completionRate>=40?GOLD:T3, icon:"🎯"},
+          {l:"Nota media",   v:avgScore==="0.0"?"-":avgScore, c:T1, icon:"⭐"},
+          {l:"XP total",     v:xp,                    c:lv.color,           icon:"⚡"},
+        ].map((s,i)=>(
           <div key={i} style={{background:CARD2,border:`0.5px solid ${BD}`,borderRadius:12,padding:16}}>
+            <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
             <div style={{fontSize:10,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>{s.l}</div>
-            <div style={{fontSize:18,fontWeight:500,color:s.c}}>{s.v}</div>
+            <div style={{fontSize:22,fontWeight:500,color:s.c}}>{s.v}</div>
           </div>
         ))}
       </div>
 
-      <div style={{...cs({marginBottom:16})}}>
-        <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>Mapa de actividad — últimos 70 días</div>
-        <div style={{display:"flex",gap:3}}>
-          {heatWeeks.map((wk,wi)=>(
-            <div key={wi} style={{display:"flex",flexDirection:"column",gap:3}}>
-              {wk.map((d,di)=><div key={di} title={`${d.date}: ${d.h}h`} style={{width:13,height:13,borderRadius:3,background:hC(d.h)}}/>)}
-            </div>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:6,alignItems:"center",marginTop:8}}>
-          <span style={{fontSize:10,color:T3}}>Menos</span>
-          {["#1A1D2C","#193D2E","#1E6B4A","#27925F","#3DD6A0"].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:2,background:c}}/>)}
-          <span style={{fontSize:10,color:T3}}>Más horas</span>
-        </div>
-      </div>
-
+      {/* Completion breakdown */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
         <div style={cs()}>
-          <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:16}}>Horas por materia</div>
-          {horasPM.map(h=>(
-            <div key={h.id} style={{marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><span style={{fontSize:12,color:T2}}>{h.name}</span><span style={{fontSize:12,color:h.color,fontWeight:500}}>{h.horas}h</span></div>
-              <div style={{height:5,background:"rgba(255,255,255,0.06)",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",width:`${Math.round(h.horas/maxH*100)}%`,background:h.color,borderRadius:3,transition:"width 0.7s"}}/></div>
+          <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:16}}>Estado de objetivos</div>
+          <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:16}}>
+            {/* Donut */}
+            {(()=>{
+              const sz=100,sw=14,r=(sz-sw*2)/2,circ=2*Math.PI*r;
+              const pCompl=done>0?completos/done:0,pParc=done>0?parciales/done:0,pInc=done>0?incompletos/done:0;
+              const o1=circ*(1-pCompl),o2=circ*(1-(pCompl+pParc)),o3=0;
+              const rot1=-Math.PI/2*180/Math.PI;
+              const rot2=rot1+pCompl*360;const rot3=rot2+pParc*360;
+              return(
+                <div style={{position:"relative",width:sz,height:sz,flexShrink:0}}>
+                  <svg width={sz} height={sz}>
+                    <circle cx={sz/2} cy={sz/2} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={sw}/>
+                    {done>0&&<>
+                      <circle cx={sz/2} cy={sz/2} r={r} fill="none" stroke={GREEN} strokeWidth={sw}
+                        strokeDasharray={`${circ*pCompl} ${circ}`} strokeDashoffset={circ*0.25} strokeLinecap="butt"/>
+                      <circle cx={sz/2} cy={sz/2} r={r} fill="none" stroke={GOLD} strokeWidth={sw}
+                        strokeDasharray={`${circ*pParc} ${circ}`} strokeDashoffset={circ*0.25-circ*pCompl} strokeLinecap="butt"/>
+                      <circle cx={sz/2} cy={sz/2} r={r} fill="none" stroke={CORAL} strokeWidth={sw}
+                        strokeDasharray={`${circ*pInc} ${circ}`} strokeDashoffset={circ*0.25-circ*(pCompl+pParc)} strokeLinecap="butt"/>
+                    </>}
+                  </svg>
+                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}>
+                    <div style={{fontSize:18,fontWeight:500,color:T1}}>{done}</div>
+                    <div style={{fontSize:9,color:T3}}>hechos</div>
+                  </div>
+                </div>
+              );
+            })()}
+            <div style={{flex:1}}>
+              {[[`Completo (${completos})`,GREEN,completos],[`Parcial (${parciales})`,GOLD,parciales],[`Incompleto (${incompletos})`,CORAL,incompletos],[`Pendiente (${pending})`,T3,pending],[`Vencido (${overdue})`,RED||"#F46FAE",overdue]].map(([lb,color,n])=>(
+                <div key={lb} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7}}><div style={{width:7,height:7,borderRadius:"50%",background:color}}/><span style={{fontSize:12,color:T2}}>{lb}</span></div>
+                  <div style={{height:4,width:80,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:total>0?`${Math.round(n/total*100)}%`:"0%",background:color,borderRadius:2}}/>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-          {totalH===0&&<div style={{fontSize:12,color:T3,marginTop:8}}>Registrá sesiones para ver la distribución.</div>}
+          </div>
+          <div style={{borderTop:`0.5px solid ${BD}`,paddingTop:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T3}}>
+              <span>Total creados: <strong style={{color:T1}}>{total}</strong></span>
+              <span>Completados: <strong style={{color:T1}}>{done}</strong></span>
+              <span>Éxito: <strong style={{color:completionRate>=70?GREEN:GOLD}}>{completionRate}%</strong></span>
+            </div>
+          </div>
         </div>
+
+        {/* Radar */}
         <div style={cs()}>
-          <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Radar de progreso</div>
-          <div style={{fontSize:11,color:T3,marginBottom:8}}>Balance entre las 7 materias</div>
-          <svg width="100%" viewBox="0 0 260 220">
-            {gridLevels.map((g,i)=><polygon key={i} points={g} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="1"/>)}
+          <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Radar de progreso de temas</div>
+          <div style={{fontSize:11,color:T3,marginBottom:4}}>% de temas vistos por materia</div>
+          <svg width="100%" viewBox="0 0 240 200">
+            {[0.25,0.5,0.75,1].map((f,i)=><polygon key={i} points={gridPts(f)} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="1"/>)}
             {radarPts.map((p,i)=><line key={i} x1={p.cx} y1={p.cy} x2={p.gx} y2={p.gy} stroke="rgba(255,255,255,0.07)" strokeWidth="1"/>)}
             <polygon points={poly} fill={`${BLUE}20`} stroke={BLUE} strokeWidth="1.5"/>
             {radarPts.map((p,i)=>(
               <g key={i}>
                 <circle cx={p.x} cy={p.y} r="4" fill={p.s.color}/>
-                <text x={p.gx+(p.gx-p.cx)*0.25} y={p.gy+(p.gy-p.cy)*0.25+3} textAnchor="middle" fill={T2} fontSize="9">{p.s.short}</text>
+                <text x={p.gx+(p.gx-p.cx)*0.22} y={p.gy+(p.gy-p.cy)*0.22+3} textAnchor="middle" fill={T2} fontSize="9">{p.s.short}</text>
               </g>
             ))}
           </svg>
         </div>
       </div>
 
+      {/* Daily activity bars */}
       <div style={{...cs({marginBottom:16})}}>
-        <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:16}}>Línea de tiempo — completados</div>
-        {feedDates.length===0?(
-          <div style={{textAlign:"center",padding:"24px 0",color:T3,fontSize:13}}><div style={{fontSize:28,marginBottom:8}}>🎯</div>Marcá temas y tareas para ver tu historial aquí.</div>
-        ):feedDates.map((date,di)=>{
-          const items=byDate[date],isToday=date===today;
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em"}}>Objetivos completados — últimos 14 días</div>
+          <div style={{fontSize:11,color:T3}}>{last14.filter(d=>d.count>0).length}/14 días activos</div>
+        </div>
+        <div style={{display:"flex",gap:5,alignItems:"flex-end",height:72}}>
+          {last14.map((d,i)=>{
+            const hTotal=Math.round(d.count/maxDay*60);
+            const hCompl=d.count>0?Math.round(d.completos/d.count*hTotal):0;
+            const hParc=d.count>0?Math.round(d.parciales/d.count*hTotal):0;
+            const hRest=hTotal-hCompl-hParc;
+            return(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:64}}>
+                  {d.count>0?<>
+                    <div style={{width:"100%",height:Math.max(hRest,0),background:CORAL+"aa",borderRadius:"0"}}/>
+                    <div style={{width:"100%",height:Math.max(hParc,0),background:GOLD+"cc"}}/>
+                    <div style={{width:"100%",height:Math.max(hCompl,0),background:GREEN,borderRadius:"4px 4px 0 0"}}/>
+                  </>:<div style={{width:"100%",height:4,background:"rgba(255,255,255,0.05)",borderRadius:2}}/>}
+                </div>
+                <div style={{fontSize:9,color:d.isToday?GREEN:T3,fontWeight:d.isToday?500:400}}>{d.label}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:12,marginTop:10}}>
+          {[[GREEN,"Completo"],[GOLD,"Parcial"],[CORAL,"Incompleto"]].map(([c,lb])=>(
+            <div key={lb} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:10,height:10,borderRadius:2,background:c}}/><span style={{fontSize:10,color:T3}}>{lb}</span></div>
+          ))}
+        </div>
+      </div>
+
+      {/* Heatmap */}
+      <div style={{...cs({marginBottom:16})}}>
+        <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>Mapa de actividad — últimos 70 días</div>
+        <div style={{display:"flex",gap:3}}>
+          {heatWeeks.map((wk,wi)=>(
+            <div key={wi} style={{display:"flex",flexDirection:"column",gap:3}}>
+              {wk.map((d,di)=><div key={di} title={`${d.date}: ${d.n} actividades`} style={{width:13,height:13,borderRadius:3,background:hC(d.n)}}/>)}
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center",marginTop:8}}>
+          <span style={{fontSize:10,color:T3}}>Menos actividad</span>
+          {["#1A1D2C","#193D2E","#1E6B4A","#27925F","#3DD6A0"].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:2,background:c}}/>)}
+          <span style={{fontSize:10,color:T3}}>Más actividad</span>
+        </div>
+      </div>
+
+      {/* Per-subject breakdown */}
+      <div style={{...cs({marginBottom:16})}}>
+        <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>Objetivos por materia</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
+          {bySubject.map(s=>(
+            <div key={s.id} style={{background:CARD2,border:`0.5px solid ${BD}`,borderRadius:10,padding:"12px 14px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:500,color:s.color}}>{s.short} <span style={{color:T2,fontWeight:400,fontSize:11}}>{s.name}</span></span>
+                {s.rate!==null&&<span style={{fontSize:11,color:s.rate>=70?GREEN:s.rate>=40?GOLD:CORAL,fontWeight:500}}>{s.rate}% éxito</span>}
+              </div>
+              <div style={{display:"flex",gap:8,fontSize:11,color:T3}}>
+                <span style={{color:GREEN}}>✓ {s.completos}</span>
+                <span style={{color:T3}}>/ {s.done} hechos / {s.total} total</span>
+              </div>
+              {s.total>0&&<div style={{marginTop:8,display:"flex",height:4,borderRadius:2,overflow:"hidden",gap:"1px"}}>
+                <div style={{width:`${s.total>0?s.completos/s.total*100:0}%`,background:GREEN}}/>
+                <div style={{width:`${s.total>0?(s.done-s.completos)/s.total*100:0}%`,background:GOLD}}/>
+                <div style={{flex:1,background:"rgba(255,255,255,0.06)"}}/>
+              </div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Timeline */}
+      <div style={cs()}>
+        <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:16}}>Línea de tiempo — actividad</div>
+        {tlDates.length===0?(
+          <div style={{textAlign:"center",padding:"24px 0",color:T3,fontSize:13}}><div style={{fontSize:28,marginBottom:8}}>🎯</div>Creá y completá objetivos para ver tu historial aquí.</div>
+        ):tlDates.map((date,di)=>{
+          const items=completedByDate[date],isToday=date===today;
           return(
-            <div key={date} style={{display:"flex",gap:16,marginBottom:22}}>
+            <div key={date} style={{display:"flex",gap:16,marginBottom:18}}>
               <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
                 <div style={{width:10,height:10,borderRadius:"50%",background:isToday?GREEN:T3,flexShrink:0,marginTop:3,boxShadow:isToday?`0 0 8px ${GREEN}`:"none"}}/>
-                {di<feedDates.length-1&&<div style={{width:1,flex:1,background:`linear-gradient(${BD2},transparent)`,marginTop:4,minHeight:24}}/>}
+                {di<tlDates.length-1&&<div style={{width:1,flex:1,background:`linear-gradient(${BD2},transparent)`,marginTop:4,minHeight:20}}/>}
               </div>
               <div style={{flex:1,paddingBottom:4}}>
-                <div style={{fontSize:12,color:isToday?GREEN:T2,fontWeight:500,marginBottom:8}}>{isToday?"Hoy":fmtDate(date)}<span style={{fontSize:10,color:T3,fontWeight:400}}> · {items.length} completados</span></div>
+                <div style={{fontSize:12,color:isToday?GREEN:T2,fontWeight:500,marginBottom:8}}>
+                  {isToday?"Hoy":fmtDate(date)}
+                  <span style={{fontSize:10,color:T3,fontWeight:400}}> · {items.length} completados</span>
+                </div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {items.map(item=>{
+                  {items.map((item,ii)=>{
                     const s=SUBJECTS.find(sub=>sub.id===item.subjectId);
+                    const cs_=item.isTopicFeed?null:COMP_ST[item.completionStatus];
                     return(
-                      <div key={item.id} style={{display:"flex",alignItems:"center",gap:6,background:s?.glow,border:`0.5px solid ${s?.color}40`,borderRadius:20,padding:"4px 10px"}}>
-                        <div style={{width:5,height:5,borderRadius:"50%",background:s?.color}}/>
+                      <div key={item.id||ii} style={{display:"flex",alignItems:"center",gap:5,background:s?.glow,border:`0.5px solid ${cs_?cs_.color+"40":s?.color+"30"}`,borderRadius:20,padding:"3px 10px"}}>
+                        <div style={{width:5,height:5,borderRadius:"50%",background:cs_?cs_.color:s?.color}}/>
                         <span style={{fontSize:11,color:T1}}>{item.text}</span>
-                        <span style={{fontSize:9,color:s?.color}}>+{item.xp} XP</span>
+                        {!item.isTopicFeed&&item.score&&<span style={{fontSize:10,color:cs_?.color}}>{'★'.repeat(item.score)}</span>}
+                        <span style={{fontSize:9,color:T3}}>+{item.xp||10} XP</span>
                       </div>
                     );
                   })}
@@ -713,37 +993,6 @@ function Estadisticas({data,addHoras,delHoras,getP}){
           );
         })}
       </div>
-
-      <div style={cs()}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{fontSize:11,color:T2,textTransform:"uppercase",letterSpacing:"0.06em"}}>Sesiones registradas</div>
-          <span style={{fontSize:11,color:T3}}>{(data.horasLog||[]).length} sesiones · {totalH}h</span>
-        </div>
-        {(data.horasLog||[]).length===0?<div style={{fontSize:12,color:T3}}>Sin sesiones. <span style={{color:BLUE,cursor:"pointer"}} onClick={()=>setShowAdd(true)}>Registrar →</span></div>
-          :<div style={{maxHeight:260,overflowY:"auto"}}>
-            {[...(data.horasLog||[])].sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(log=>{
-              const s=SUBJECTS.find(sub=>sub.id===log.subjectId);
-              return(
-                <div key={log.id} style={{display:"flex",gap:12,alignItems:"center",padding:"9px 0",borderBottom:`0.5px solid ${BD}`}}>
-                  <div style={{background:s?.glow,color:s?.color,borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{log.fecha.slice(5).replace("-","/")}</div>
-                  <div style={{flex:1}}><div style={{fontSize:12,color:T1}}>{s?.name}</div>{log.nota&&<div style={{fontSize:10,color:T3}}>{log.nota}</div>}</div>
-                  <div style={{fontWeight:500,fontSize:14,color:s?.color}}>{log.horas}h</div>
-                  <button onClick={()=>delHoras(log.id)} style={{border:"none",background:"transparent",cursor:"pointer",color:T3,fontSize:16}}>×</button>
-                </div>
-              );
-            })}
-          </div>}
-      </div>
-      <Modal show={showAdd} onClose={()=>setShowAdd(false)} title="Registrar sesión de estudio">
-        <FR label="Materia"><select value={nLog.subjectId} onChange={e=>setNLog(n=>({...n,subjectId:e.target.value}))} style={IS}>{SUBJECTS.map(s=><option key={s.id} value={s.id}>{s.name}{s.finalOnly?" (final)":""}</option>)}</select></FR>
-        <FR label="Horas"><input type="number" min="0.5" max="12" step="0.5" value={nLog.horas} onChange={e=>setNLog(n=>({...n,horas:e.target.value}))} style={IS}/></FR>
-        <FR label="Fecha"><input type="date" value={nLog.fecha} onChange={e=>setNLog(n=>({...n,fecha:e.target.value}))} style={IS}/></FR>
-        <FR label="Nota (opcional)"><input type="text" value={nLog.nota} onChange={e=>setNLog(n=>({...n,nota:e.target.value}))} placeholder="ej: Ejercicios de Bernoulli" style={IS} onKeyDown={e=>e.key==="Enter"&&doAdd()}/></FR>
-        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-          <Btn onClick={()=>setShowAdd(false)}>Cancelar</Btn>
-          <Btn onClick={doAdd} primary>Registrar</Btn>
-        </div>
-      </Modal>
     </div>
   );
 }
@@ -783,20 +1032,33 @@ function App(){
   const addEvent=ev=>setData(d=>({...d,events:[...d.events,ev]}));
   const deleteEvent=id=>setData(d=>({...d,events:d.events.filter(e=>e.id!==id)}));
   const addTodo=t=>setData(d=>({...d,todos:[...d.todos,t]}));
-  const toggleTodo=id=>setData(d=>{
-    const todo=(d.todos||[]).find(t=>t.id===id),newDone=!todo?.done;
-    const todos=d.todos.map(t=>t.id===id?{...t,done:newDone}:t);
-    let feed=d.feed||[];
-    if(newDone&&todo)feed=[...feed,{id:Date.now().toString()+"_t",date:todayStr(),time:timeStr(),subjectId:todo.subjectId,text:todo.text,type:"todo",xp:5}];
+  const completeTodo=(id,completionStatus,score)=>setData(d=>{
+    const todo=(d.todos||[]).find(t=>t.id===id);
+    if(!todo)return d;
+    const todos=d.todos.map(t=>t.id===id?{...t,done:true,completionStatus,score,completedAt:todayStr()}:t);
+    const xpMap={completo:15,parcial:8,incompleto:3};
+    const feed=[...(d.feed||[]),{id:Date.now().toString()+"_t",date:todayStr(),time:timeStr(),subjectId:todo.subjectId,text:todo.text,type:"todo",xp:xpMap[completionStatus]||5,completionStatus,score}];
     return{...d,todos,feed};
   });
+  const undoTodo=id=>setData(d=>({...d,todos:d.todos.map(t=>t.id===id?{...t,done:false,completionStatus:null,score:null,completedAt:null}:t)}));
   const deleteTodo=id=>setData(d=>({...d,todos:d.todos.filter(t=>t.id!==id)}));
   const updNote=(sid,note)=>setData(d=>({...d,notes:{...d.notes,[sid]:note}}));
   const updFinal=(sid,field,val)=>setData(d=>({...d,finals:{...d.finals,[sid]:{...d.finals[sid],[field]:val}}}));
-  const addHoras=log=>setData(d=>({...d,horasLog:[...(d.horasLog||[]),log]}));
-  const delHoras=id=>setData(d=>({...d,horasLog:(d.horasLog||[]).filter(l=>l.id!==id)}));
 
-  const NAV=[{id:"dashboard",icon:"◈",label:"Panel"},{id:"materias",icon:"◉",label:"Materias"},{id:"calendario",icon:"◷",label:"Calendario"},{id:"pendientes",icon:"◻",label:"Pendientes"},{id:"finales",icon:"◆",label:"Finales"},{id:"estadisticas",icon:"◎",label:"Estadísticas"}];
+  useEffect(()=>{
+    window.__addResource=(sid,res)=>setData(d=>({...d,resources:{...d.resources,[sid]:[...(d.resources?.[sid]||[]),res]}}));
+    window.__delResource=(sid,id)=>setData(d=>({...d,resources:{...d.resources,[sid]:(d.resources?.[sid]||[]).filter(r=>r.id!==id)}}));
+  },[]);
+
+  const overdueCount=(data.todos||[]).filter(t=>!t.done&&t.deadline&&daysUntil(t.deadline)<0).length;
+  const NAV=[
+    {id:"dashboard",  icon:"◈", label:"Panel"},
+    {id:"materias",   icon:"◉", label:"Materias"},
+    {id:"calendario", icon:"◷", label:"Calendario"},
+    {id:"pendientes", icon:"◻", label:"Objetivos", badge:overdueCount>0?overdueCount:null},
+    {id:"finales",    icon:"◆", label:"Finales"},
+    {id:"estadisticas",icon:"◎",label:"Mis stats"},
+  ];
 
   return(
     <div style={{fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",background:BG,minHeight:"100vh",display:"flex",flexDirection:"column"}}>
@@ -813,7 +1075,9 @@ function App(){
         <div style={{width:160,background:CARD,borderRight:`0.5px solid ${BD}`,padding:"14px 0",flexShrink:0,display:"flex",flexDirection:"column",position:"sticky",top:54,alignSelf:"flex-start",height:"calc(100vh - 54px)",overflowY:"auto"}}>
           {NAV.map(item=>(
             <button key={item.id} onClick={()=>setView(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 16px",border:"none",cursor:"pointer",background:view===item.id?CARD2:"transparent",color:view===item.id?T1:T2,fontSize:13,fontWeight:view===item.id?500:400,textAlign:"left",borderLeft:view===item.id?`2px solid ${BLUE}`:"2px solid transparent"}}>
-              <span style={{fontSize:13,color:view===item.id?BLUE:T3}}>{item.icon}</span>{item.label}
+              <span style={{fontSize:13,color:view===item.id?BLUE:T3}}>{item.icon}</span>
+              <span style={{flex:1}}>{item.label}</span>
+              {item.badge&&<span style={{background:"#F46FAE",color:"white",fontSize:10,fontWeight:500,borderRadius:"50%",width:17,height:17,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.badge}</span>}
             </button>
           ))}
           <div style={{margin:"14px 14px 6px",borderTop:`0.5px solid ${BD}`,paddingTop:14}}>
@@ -834,9 +1098,9 @@ function App(){
           {view==="dashboard"   &&<Dashboard    data={data} getP={getP} setView={setView} setSub={setSub} upEvents={upEvents} pendTodos={pendTodos}/>}
           {view==="materias"    &&<Materias     data={data} selSub={selSub} setSub={setSub} updTopic={updTopic} updNote={updNote} getP={getP}/>}
           {view==="calendario"  &&<Calendario   data={data} month={calMonth} year={calYear} setMonth={setCM} setYear={setCY} addEvent={addEvent} deleteEvent={deleteEvent}/>}
-          {view==="pendientes"  &&<Pendientes   data={data} addTodo={addTodo} toggleTodo={toggleTodo} deleteTodo={deleteTodo}/>}
+          {view==="pendientes"  &&<Pendientes   data={data} addTodo={addTodo} completeTodo={completeTodo} undoTodo={undoTodo} deleteTodo={deleteTodo}/>}
           {view==="finales"     &&<Finales      data={data} updFinal={updFinal} getP={getP}/>}
-          {view==="estadisticas"&&<Estadisticas data={data} addHoras={addHoras} delHoras={delHoras} getP={getP}/>}
+          {view==="estadisticas"&&<PanelObjetivos data={data} getP={getP}/>}
         </div>
       </div>
     </div>
